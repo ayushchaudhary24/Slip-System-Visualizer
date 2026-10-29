@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>FCC 12 Slip Systems Visualizer & Poster Generator</title>
+  <style>
+    body { background: #ffffff; color: #000000; font-family: serif; margin: 10px; }
+    table { width: 100%; border-collapse: collapse; }
+    td { vertical-align: top; padding: 8px; border: 1px solid #000000; }
+    input[type="number"] { width: 45px; }
+    button { margin: 2px; padding: 4px 7px; cursor: pointer; font-family: monospace; }
+    #canvas-container { width: 720px; max-width: 100%; height: 560px; border: 1px solid #000000; box-sizing: border-box; position: relative; }
+    #canvas-container canvas { display: block; max-width: 100%; }
+    #current-slip-system-label {
+      position: absolute; top: 10px; left: 10px; z-index: 2;
+      padding: 6px 9px; border: 1px solid #333333; border-radius: 4px;
+      background: rgba(255,255,255,0.92); color: #000000;
+      font: bold 14px serif; pointer-events: none;
+    }
+    #schmid-panel {
+      width: 720px; max-width: 100%; box-sizing: border-box; margin-top: 12px;
+      padding: 14px; border: 1px solid #333333; background: #f7f9fc;
+    }
+    #schmid-panel h3 { margin-top: 0; }
+    .schmid-mode { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; margin: 8px 0 12px; }
+    .schmid-mode label { cursor: pointer; font-weight: bold; }
+    #custom-schmid-inputs { padding: 12px; margin: 10px 0; border: 1px solid #aab3bf; background: #ffffff; }
+    .schmid-input-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+    .schmid-input-row b { min-width: 145px; }
+    .schmid-input-row label { white-space: nowrap; }
+    .schmid-input-row input[type="number"] { width: 58px; box-sizing: border-box; }
+    #custom-schmid-message { margin: 8px 0 0; font-size: 0.92rem; }
+    #schmid-results { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+    .schmid-result { min-width: 0; padding: 10px; border: 1px solid #aab3bf; background: #ffffff; }
+    .factor-value { margin: 8px 0; font-size: 1.2rem; font-weight: bold; }
+    .factor-detail { font-size: 0.9rem; line-height: 1.5; overflow-wrap: anywhere; }
+    .schmid-warning { padding: 8px; margin: 8px 0; border: 1px solid #bb7b00; background: #fff8e8; }
+    #schmid-formula { margin-top: 12px; padding-top: 10px; border-top: 1px solid #aab3bf; line-height: 1.7; }
+    .formula-main { font-size: 1.12rem; font-weight: bold; }
+    .formula-note { font-size: 0.9rem; }
+    @media (max-width: 760px) {
+      #schmid-results { grid-template-columns: 1fr; }
+      #canvas-container { height: auto; aspect-ratio: 9 / 7; }
+      #canvas-container canvas { width: 100% !important; height: auto !important; }
+    }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+
+  <h2>Aluminium (FCC) 12 Slip Systems {111}&lt;110&gt; Visualizer</h2>
+  <p><small>Controls: Left-Click + Drag to Rotate | Right-Click + Drag to Pan | Scroll to Zoom</small></p>
+
+  <table>
+    <tr>
+      <td width="42%">
+        <h3>1. The 12 FCC Slip Systems {111}&lt;110&gt;</h3>
+        <div id="presets-container"></div>
+
+        <hr>
+
+        <h3>2. Custom Plane &amp; Direction</h3>
+        <form id="custom-form" onsubmit="applyCustom(event)">
+          <p>
+            <b>Plane (h k l):</b>
+            h: <input type="number" id="in-h" value="1" step="1" required>
+            k: <input type="number" id="in-k" value="1" step="1" required>
+            l: <input type="number" id="in-l" value="1" step="1" required>
+          </p>
+          <p>
+            <b>Direction [u v w]:</b>
+            u: <input type="number" id="in-u" value="1" step="1" required>
+            v: <input type="number" id="in-v" value="-1" step="1" required>
+            w: <input type="number" id="in-w" value="0" step="1" required>
+          </p>
+          <button type="submit"><b>Plot Custom (hkl)[uvw]</b></button>
+        </form>
+
+        <hr>
+
+        <h3>3. Display &amp; Export Options</h3>
+        <p>
+          <label><input type="checkbox" id="chk-atoms" checked onchange="renderSystem()"> Show 14 FCC Atoms</label><br>
+          <label><input type="checkbox" id="chk-axes" checked onchange="renderSystem()"> Show Axes &amp; Axis Labels</label><br>
+          <label><input type="checkbox" id="chk-labels" checked onchange="renderSystem()"> Show Plane &amp; Direction Labels</label>
+        </p>
+        <p>
+          <button type="button" onclick="exportSingleImage()"><b>Export Current View (PNG)</b></button>
+          <button type="button" onclick="exportAll12Poster()"><b>Export All 12 Systems as 1 Poster (PNG)</b></button><br>
+          <button type="button" onclick="resetCamera()">Reset Camera View</button>
+        </p>
+
+        <hr>
+
+        <h3>4. Crystallographic Verification</h3>
+        <div id="output-info"></div>
+      </td>
+
+      <td>
+        <div id="canvas-container">
+          <div id="current-slip-system-label">Slip System: (111)[1̅10]</div>
+        </div>
+
+        <!-- Task 2 only: Schmid-factor calculator for the three assigned loading directions. -->
+        <section id="schmid-panel" aria-live="polite">
+          <h3>Schmid Factor Calculator — Task 2</h3>
+          <div class="schmid-mode" role="radiogroup" aria-label="Schmid factor calculation mode">
+            <label><input type="radio" name="schmid-mode" id="schmid-mode-automatic" value="automatic" checked onchange="setSchmidMode('automatic')"> Automatic</label>
+            <label><input type="radio" name="schmid-mode" id="schmid-mode-custom" value="custom" onchange="setSchmidMode('custom')"> Custom</label>
+          </div>
+          <p id="schmid-mode-description">Automatic mode calculates the Schmid factor for the slip system currently selected in the visualizer.</p>
+          <div id="custom-schmid-inputs" hidden>
+            <p><b>Enter a slip system</b> (integer Miller indices):</p>
+            <div class="schmid-input-row">
+              <b>Slip plane normal (h k l):</b>
+              <label>h <input type="number" id="schmid-h" value="1" step="1" required oninput="invalidateCustomSchmidResult()"></label>
+              <label>k <input type="number" id="schmid-k" value="1" step="1" required oninput="invalidateCustomSchmidResult()"></label>
+              <label>l <input type="number" id="schmid-l" value="1" step="1" required oninput="invalidateCustomSchmidResult()"></label>
+            </div>
+            <div class="schmid-input-row">
+              <b>Slip direction (u v w):</b>
+              <label>u <input type="number" id="schmid-u" value="1" step="1" required oninput="invalidateCustomSchmidResult()"></label>
+              <label>v <input type="number" id="schmid-v" value="-1" step="1" required oninput="invalidateCustomSchmidResult()"></label>
+              <label>w <input type="number" id="schmid-w" value="0" step="1" required oninput="invalidateCustomSchmidResult()"></label>
+            </div>
+            <button type="button" onclick="computeCustomSchmidFactor()"><b>Compute Schmid Factor</b></button>
+            <p id="custom-schmid-message" role="status">Edit the indices if needed, then click Compute.</p>
+          </div>
+          <p><b id="schmid-system-label">Current slip system:</b> <span id="schmid-current-system">(111)[1-10]</span></p>
+          <div id="schmid-results"></div>
+        </section>
+      </td>
+    </tr>
+  </table>
+
+<script>
+// --- 1. OVERBAR FORMATTERS ---
+function formatBar(n) { return n < 0 ? Math.abs(n) + '\u0304' : String(n); }
+function formatPlaneText(h, k, l) { return `(${formatBar(h)}${formatBar(k)}${formatBar(l)})`; }
+function formatDirText(u, v, w) { return `[${formatBar(u)}${formatBar(v)}${formatBar(w)}]`; }
+function formatRawIndex(arr, open, close) { return `${open}${arr.join('')}${close}`; }
+
+// --- 2. 3D TEXT SPRITE GENERATOR ---
+function createLabelSprite(text, textColor = '#000000', bgColor = 'rgba(255,255,255,0.9)', borderColor = null) {
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  const fontSize = 42;
+  ctx.font = `bold ${fontSize}px serif`;
+  const textWidth = ctx.measureText(text).width;
+  const padX = 18, padY = 12;
+  canvas.width = textWidth + padX * 2;
+  canvas.height = fontSize + padY * 2;
+
+  ctx.font = `bold ${fontSize}px serif`;
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'center';
+
+  if (bgColor) {
+    ctx.fillStyle = bgColor;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+  if (borderColor) {
+    ctx.strokeStyle = borderColor;
+    ctx.lineWidth = 4;
+    ctx.strokeRect(2, 2, canvas.width - 4, canvas.height - 4);
+  }
+  ctx.fillStyle = textColor;
+  ctx.fillText(text, canvas.width / 2, canvas.height / 2 + 2);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.minFilter = THREE.LinearFilter;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false }));
+  sprite.renderOrder = 999;
+  const scaleFactor = 0.0022;
+  sprite.scale.set(canvas.width * scaleFactor, canvas.height * scaleFactor, 1);
+  return sprite;
+}
+
+// --- 3. EXACT 12 SLIP SYSTEMS ---
+const presets = [
+  // Plane (111)
+  { id: 1,  p: [1,1,1],  d: [1,-1,0] },
+  { id: 2,  p: [1,1,1],  d: [0,1,-1] },
+  { id: 3,  p: [1,1,1],  d: [1,0,-1] },
+  // Plane (-111)
+  { id: 4,  p: [-1,1,1], d: [1,1,0] },
+  { id: 5,  p: [-1,1,1], d: [0,1,-1] },
+  { id: 6,  p: [-1,1,1], d: [1,0,1] },
+  // Plane (1-11)
+  { id: 7,  p: [1,-1,1], d: [1,1,0] },
+  { id: 8,  p: [1,-1,1], d: [0,1,1] },
+  { id: 9,  p: [1,-1,1], d: [1,0,-1] },
+  // Plane (11-1)
+  { id: 10, p: [1,1,-1], d: [1,-1,0] },
+  { id: 11, p: [1,1,-1], d: [0,1,1] },
+  { id: 12, p: [1,1,-1], d: [1,0,1] }
+];
+
+const presetsDiv = document.getElementById('presets-container');
+presets.forEach(sys => {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.textContent = `#${sys.id}: ${formatRawIndex(sys.p,'(',')')}${formatRawIndex(sys.d,'[',']')}`;
+  btn.onclick = () => {
+    document.getElementById('in-h').value = sys.p[0];
+    document.getElementById('in-k').value = sys.p[1];
+    document.getElementById('in-l').value = sys.p[2];
+    document.getElementById('in-u').value = sys.d[0];
+    document.getElementById('in-v').value = sys.d[1];
+    document.getElementById('in-w').value = sys.d[2];
+    renderSystem();
+  };
+  presetsDiv.appendChild(btn);
+  if (sys.id % 3 === 0) presetsDiv.appendChild(document.createElement('br'));
+});
+
+// --- 4. THREE.JS SCENE ---
+const container = document.getElementById('canvas-container');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xffffff);
+
+const camera = new THREE.PerspectiveCamera(40, container.clientWidth / container.clientHeight, 0.1, 100);
+camera.up.set(0, 0, 1);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setSize(container.clientWidth, container.clientHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+container.appendChild(renderer.domElement);
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+function resetCamera() {
+  camera.position.set(2.7, 2.3, 2.5);
+  controls.target.set(0, 0, 0);
+  controls.update();
+}
+resetCamera();
+
+const cellGroup = new THREE.Group();
+cellGroup.position.set(-0.5, -0.5, -0.5);
+scene.add(cellGroup);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.85));
+const dirLight = new THREE.DirectionalLight(0xffffff, 0.45);
+dirLight.position.set(4, 5, 6);
+scene.add(dirLight);
+
+// Unit Cube Wireframe
+const boxEdges = new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1));
+const boxLines = new THREE.LineSegments(boxEdges, new THREE.LineBasicMaterial({ color: 0x000000 }));
+boxLines.position.set(0.5, 0.5, 0.5);
+cellGroup.add(boxLines);
+
+// Axes + Axis Labels
+const axesGroup = new THREE.Group();
+axesGroup.add(new THREE.ArrowHelper(new THREE.Vector3(1,0,0), new THREE.Vector3(0,0,0), 1.3, 0xcc0000, 0.07, 0.04));
+axesGroup.add(new THREE.ArrowHelper(new THREE.Vector3(0,1,0), new THREE.Vector3(0,0,0), 1.3, 0x008800, 0.07, 0.04));
+axesGroup.add(new THREE.ArrowHelper(new THREE.Vector3(0,0,1), new THREE.Vector3(0,0,0), 1.3, 0x0000cc, 0.07, 0.04));
+
+const lx = createLabelSprite('X [100]', '#cc0000', 'rgba(255,255,255,0.85)'); lx.position.set(1.48, 0, 0); axesGroup.add(lx);
+const ly = createLabelSprite('Y [010]', '#008800', 'rgba(255,255,255,0.85)'); ly.position.set(0, 1.48, 0); axesGroup.add(ly);
+const lz = createLabelSprite('Z [001]', '#0000cc', 'rgba(255,255,255,0.85)'); lz.position.set(0, 0, 1.45); axesGroup.add(lz);
+cellGroup.add(axesGroup);
+
+// 14 FCC Atoms
+const fccCoords = [
+  [0,0,0], [1,0,0], [0,1,0], [0,0,1], [1,1,0], [1,0,1], [0,1,1], [1,1,1],
+  [0.5,0.5,0], [0.5,0,0.5], [0,0.5,0.5], [0.5,0.5,1], [0.5,1,0.5], [1,0.5,0.5]
+];
+const atomMeshes = [];
+const sphereGeo = new THREE.SphereGeometry(0.055, 24, 24);
+fccCoords.forEach(pt => {
+  const mat = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.4 });
+  const m = new THREE.Mesh(sphereGeo, mat);
+  m.position.set(...pt);
+  m.userData.pt = pt;
+  cellGroup.add(m);
+  atomMeshes.push(m);
+});
+
+const dynamicGroup = new THREE.Group();
+cellGroup.add(dynamicGroup);
+
+// --- 5. COMPUTE PLANE POLYGON INTERSECTION ---
+function getPlaneCubePolygon(h, k, l) {
+  if (h === 0 && k === 0 && l === 0) return null;
+  const ox = h < 0 ? 1 : 0, oy = k < 0 ? 1 : 0, oz = l < 0 ? 1 : 0;
+  const d = h * ox + k * oy + l * oz + 1;
+
+  const edges = [
+    [[0,0,0],[1,0,0]], [[0,1,0],[1,1,0]], [[0,0,1],[1,0,1]], [[0,1,1],[1,1,1]],
+    [[0,0,0],[0,1,0]], [[1,0,0],[1,1,0]], [[0,0,1],[0,1,1]], [[1,0,1],[1,1,1]],
+    [[0,0,0],[0,0,1]], [[1,0,0],[1,0,1]], [[0,1,0],[0,1,1]], [[1,1,0],[1,1,1]]
+  ];
+
+  const pts = [];
+  edges.forEach(([p1, p2]) => {
+    const val1 = h * p1[0] + k * p1[1] + l * p1[2] - d;
+    const val2 = h * p2[0] + k * p2[1] + l * p2[2] - d;
+    if (Math.abs(val1) < 1e-6) pts.push(new THREE.Vector3(...p1));
+    if (Math.abs(val2) < 1e-6) pts.push(new THREE.Vector3(...p2));
+    if (val1 * val2 < -1e-6) {
+      const t = val1 / (val1 - val2);
+      pts.push(new THREE.Vector3(p1[0]+t*(p2[0]-p1[0]), p1[1]+t*(p2[1]-p1[1]), p1[2]+t*(p2[2]-p1[2])));
+    }
+  });
+
+  const unique = [];
+  pts.forEach(p => { if (!unique.some(u => u.distanceTo(p) < 1e-4)) unique.push(p); });
+  if (unique.length < 3) return null;
+
+  const center = new THREE.Vector3();
+  unique.forEach(p => center.add(p));
+  center.divideScalar(unique.length);
+
+  const normal = new THREE.Vector3(h, k, l).normalize();
+  const refVec = new THREE.Vector3().subVectors(unique[0], center).normalize();
+  const tangent = new THREE.Vector3().crossVectors(normal, refVec).normalize();
+
+  unique.sort((a, b) => {
+    const va = new THREE.Vector3().subVectors(a, center);
+    const vb = new THREE.Vector3().subVectors(b, center);
+    return Math.atan2(va.dot(tangent), va.dot(refVec)) - Math.atan2(vb.dot(tangent), vb.dot(refVec));
+  });
+
+  return { vertices: unique, d: d, center: center };
+}
+
+// --- 6. RENDER SYSTEM ---
+function renderSystem() {
+  while (dynamicGroup.children.length > 0) dynamicGroup.remove(dynamicGroup.children[0]);
+
+  const h = parseInt(document.getElementById('in-h').value) || 0;
+  const k = parseInt(document.getElementById('in-k').value) || 0;
+  const l = parseInt(document.getElementById('in-l').value) || 0;
+  const u = parseInt(document.getElementById('in-u').value) || 0;
+  const v = parseInt(document.getElementById('in-v').value) || 0;
+  const w = parseInt(document.getElementById('in-w').value) || 0;
+
+  axesGroup.visible = document.getElementById('chk-axes').checked;
+  const showAtoms = document.getElementById('chk-atoms').checked;
+  const showLabels = document.getElementById('chk-labels').checked;
+
+  const planeText = formatPlaneText(h, k, l);
+  const dirText = formatDirText(u, v, w);
+
+  const poly = getPlaneCubePolygon(h, k, l);
+  let planeD = null;
+
+  if (poly && poly.vertices && poly.vertices.length >= 3) {
+    planeD = poly.d;
+    const verts = poly.vertices;
+    const geom = new THREE.BufferGeometry();
+    const posArr = [];
+    for (let i = 1; i < verts.length - 1; i++) {
+      posArr.push(...verts[0].toArray(), ...verts[i].toArray(), ...verts[i+1].toArray());
+    }
+    geom.setAttribute('position', new THREE.Float32BufferAttribute(posArr, 3));
+    geom.computeVertexNormals();
+
+    dynamicGroup.add(new THREE.Mesh(geom, new THREE.MeshBasicMaterial({
+      color: 0x99ccff, side: THREE.DoubleSide, transparent: true, opacity: 0.55
+    })));
+
+    const borderPts = [...verts, verts[0]];
+    dynamicGroup.add(new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(borderPts),
+      new THREE.LineBasicMaterial({ color: 0x004488 })
+    ));
+
+    if (showLabels) {
+      const pLabel = createLabelSprite(`Plane ${planeText}`, '#003366', 'rgba(235, 245, 255, 0.92)', '#004488');
+      pLabel.position.copy(poly.center);
+      dynamicGroup.add(pLabel);
+    }
+  }
+
+  // Draw Direction [uvw] anchored directly onto the triangle edge
+  if (u !== 0 || v !== 0 || w !== 0) {
+    const maxComp = Math.max(Math.abs(u), Math.abs(v), Math.abs(w));
+    const stepVec = new THREE.Vector3(u / maxComp, v / maxComp, w / maxComp);
+    let startPt = null;
+
+    if (poly && poly.vertices) {
+      for (const vert of poly.vertices) {
+        const candidateEnd = new THREE.Vector3().addVectors(vert, stepVec);
+        if (poly.vertices.some(v2 => v2.distanceTo(candidateEnd) < 1e-4)) {
+          startPt = vert.clone();
+          break;
+        }
+      }
+    }
+    if (!startPt) {
+      startPt = new THREE.Vector3(u < 0 ? 1 : 0, v < 0 ? 1 : 0, w < 0 ? 1 : 0);
+    }
+
+    const endPt = new THREE.Vector3().addVectors(startPt, stepVec);
+    const arrow = new THREE.ArrowHelper(
+      stepVec.clone().normalize(), startPt, stepVec.length(), 0xd90000, 0.14, 0.08
+    );
+    dynamicGroup.add(arrow);
+
+    if (showLabels) {
+      const dLabel = createLabelSprite(`Dir ${dirText}`, '#b30000', 'rgba(255, 240, 240, 0.92)', '#d90000');
+      const labelPos = new THREE.Vector3().lerpVectors(startPt, endPt, 0.55);
+      labelPos.z += 0.09;
+      dLabel.position.copy(labelPos);
+      dynamicGroup.add(dLabel);
+    }
+  }
+
+  // Highlight In-Plane FCC Atoms
+  atomMeshes.forEach(m => {
+    const [x, y, z] = m.userData.pt;
+    const onPlane = planeD !== null && Math.abs(h * x + k * y + l * z - planeD) < 1e-4;
+    m.visible = showAtoms;
+    m.material.color.setHex(onPlane ? 0xff8800 : 0x888888);
+    m.scale.setScalar(onPlane ? 1.2 : 0.9);
+  });
+
+  const dot = h * u + k * v + l * w;
+  const inPlaneStatus = dot === 0
+    ? "✅ YES (Direction lies inside the plane)"
+    : "❌ NO (Direction does NOT lie in the plane)";
+
+  document.getElementById('output-info').innerHTML = `
+    <p><b>Slip Plane:</b> ${planeText} &rarr; (${h}, ${k}, ${l})</p>
+    <p><b>Slip Direction:</b> ${dirText} &rarr; [${u}, ${v}, ${w}]</p>
+    <p><b>Dot Product (hu + kv + lw):</b> (${h})(${u}) + (${k})(${v}) + (${l})(${w}) = <b>${dot}</b></p>
+    <p><b>Status:</b> ${inPlaneStatus}</p>
+  `;
+
+  updateSchmidFactorPanel([h, k, l], [u, v, w]);
+}
+
+// --- Task 2: Schmid factor for loading directions [100], [110], and [111] ---
+const task2LoadingDirections = [
+  { label: '[100]', vector: [1, 0, 0] },
+  { label: '[110]', vector: [1, 1, 0] },
+  { label: '[111]', vector: [1, 1, 1] }
+];
+
+function dotProduct(a, b) {
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+function vectorMagnitude(vector) {
+  return Math.sqrt(dotProduct(vector, vector));
+}
+
+function calculateSchmidFactor(loading, planeNormal, slipDirection) {
+  const loadingMagnitude = vectorMagnitude(loading);
+  const normalMagnitude = vectorMagnitude(planeNormal);
+  const directionMagnitude = vectorMagnitude(slipDirection);
+
+  if (loadingMagnitude === 0 || normalMagnitude === 0 || directionMagnitude === 0) {
+    return null;
+  }
+
+  const cosPhi = dotProduct(loading, planeNormal) / (loadingMagnitude * normalMagnitude);
+  const cosLambda = dotProduct(loading, slipDirection) / (loadingMagnitude * directionMagnitude);
+  return {
+    cosPhi: cosPhi,
+    cosLambda: cosLambda,
+    factor: Math.abs(cosPhi * cosLambda)
+  };
+}
+
+function buildSchmidResults(planeNormal, slipDirection) {
+  return task2LoadingDirections.map(item => {
+    const result = calculateSchmidFactor(item.vector, planeNormal, slipDirection);
+    if (!result) {
+      return `<div class="schmid-result"><b>Loading ${item.label}</b><p class="factor-value">m = N/A</p><div class="factor-detail">A loading direction, plane normal, or slip direction is the zero vector.</div></div>`;
+    }
+    return `
+      <div class="schmid-result">
+        <b>Loading direction ${item.label}</b>
+        <div class="factor-value">m = ${result.factor.toFixed(4)}</div>
+        <div class="factor-detail">
+          cos φ = ${result.cosPhi.toFixed(4)}<br>
+          cos λ = ${result.cosLambda.toFixed(4)}<br>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function updateSchmidFactorPanel(planeNormal, slipDirection) {
+  // Automatic mode always follows the currently plotted visualizer system.
+  // In custom mode, keep the displayed answer fixed until Compute is pressed.
+  if (document.getElementById('schmid-mode-custom').checked) return;
+
+  document.getElementById('schmid-system-label').textContent = 'Current slip system:';
+  document.getElementById('schmid-current-system').textContent = `${formatPlaneText(...planeNormal)} ${formatDirText(...slipDirection)}`;
+  document.getElementById('schmid-results').innerHTML = buildSchmidResults(planeNormal, slipDirection);
+}
+
+let customSchmidInitialized = false;
+let customSchmidHasResult = false;
+
+function setSchmidMode(mode) {
+  const isCustom = mode === 'custom';
+  document.getElementById('custom-schmid-inputs').hidden = !isCustom;
+  document.getElementById('schmid-mode-description').textContent = isCustom
+    ? 'Custom mode uses the plane and direction entered below. Results update only after you click Compute.'
+    : 'Automatic mode calculates the Schmid factor for the slip system currently selected in the visualizer.';
+
+  const currentSystem = document.getElementById('schmid-current-system');
+  const resultsContainer = document.getElementById('schmid-results');
+  const systemLabel = document.getElementById('schmid-system-label');
+
+  if (isCustom) {
+    if (!customSchmidInitialized) {
+      // Start the custom form with the currently selected visualizer system.
+      ['h', 'k', 'l', 'u', 'v', 'w'].forEach((key, index) => {
+        document.getElementById(`schmid-${key}`).value = document.getElementById(`in-${key}`).value;
+      });
+      customSchmidInitialized = true;
+    }
+    systemLabel.textContent = 'Custom slip system:';
+    if (!customSchmidHasResult) {
+      currentSystem.textContent = 'Not computed yet';
+      resultsContainer.innerHTML = '<p>Enter the plane and direction above, then click <b>Compute Schmid Factor</b>.</p>';
+    }
+  } else {
+    customSchmidHasResult = false;
+    renderSystem();
+  }
+}
+
+function invalidateCustomSchmidResult() {
+  customSchmidHasResult = false;
+  if (document.getElementById('schmid-mode-custom').checked) {
+    document.getElementById('schmid-current-system').textContent = 'Not computed yet';
+    document.getElementById('schmid-results').innerHTML = '<p>Inputs changed. Click <b>Compute Schmid Factor</b> to update the results.</p>';
+    document.getElementById('custom-schmid-message').textContent = 'Ready to compute the updated slip system.';
+  }
+}
+
+function computeCustomSchmidFactor() {
+  const keys = ['h', 'k', 'l', 'u', 'v', 'w'];
+  const values = {};
+  for (const key of keys) {
+    const input = document.getElementById(`schmid-${key}`);
+    if (input.value.trim() === '' || !Number.isFinite(Number(input.value)) || !Number.isInteger(Number(input.value))) {
+      document.getElementById('custom-schmid-message').textContent = `Please enter an integer for ${key}.`;
+      input.focus();
+      return;
+    }
+    values[key] = Number(input.value);
+  }
+
+  const planeNormal = [values.h, values.k, values.l];
+  const slipDirection = [values.u, values.v, values.w];
+  if (vectorMagnitude(planeNormal) === 0) {
+    document.getElementById('custom-schmid-message').textContent = 'The plane normal [h k l] cannot be [0 0 0].';
+    return;
+  }
+  if (vectorMagnitude(slipDirection) === 0) {
+    document.getElementById('custom-schmid-message').textContent = 'The slip direction [u v w] cannot be [0 0 0].';
+    return;
+  }
+
+  const dot = dotProduct(planeNormal, slipDirection);
+  const currentSystem = document.getElementById('schmid-current-system');
+  const resultsContainer = document.getElementById('schmid-results');
+  document.getElementById('schmid-system-label').textContent = 'Custom slip system:';
+  currentSystem.textContent = `${formatPlaneText(...planeNormal)} ${formatDirText(...slipDirection)}`;
+  resultsContainer.innerHTML = buildSchmidResults(planeNormal, slipDirection);
+
+  if (dot === 0) {
+    document.getElementById('custom-schmid-message').textContent = `Computed successfully. In-plane check: hu + kv + lw = ${dot}, so the direction lies in the plane.`;
+  } else {
+    document.getElementById('custom-schmid-message').innerHTML = `Computed, but note: hu + kv + lw = ${dot}, not 0. The direction is <b>not in the plane</b>, so this is not a valid slip system.`;
+  }
+  customSchmidHasResult = true;
+}
+
+function applyCustom(e) { e.preventDefault(); renderSystem(); }
+
+// --- 7. EXPORT SINGLE PNG ---
+function exportSingleImage() {
+  renderer.render(scene, camera);
+  const h = document.getElementById('in-h').value, k = document.getElementById('in-k').value, l = document.getElementById('in-l').value;
+  const u = document.getElementById('in-u').value, v = document.getElementById('in-v').value, w = document.getElementById('in-w').value;
+  const link = document.createElement('a');
+  link.download = `FCC_(${h}${k}${l})_[${u}${v}${w}].png`;
+  link.href = renderer.domElement.toDataURL('image/png');
+  link.click();
+}
+
+// --- 8. EXPORT ALL 12 SLIP SYSTEMS AS A SINGLE SUMMARY POSTER ---
+function exportAll12Poster() {
+  // Save current input values so we can restore them after generating the poster
+  const origInputs = [
+    document.getElementById('in-h').value,
+    document.getElementById('in-k').value,
+    document.getElementById('in-l').value,
+    document.getElementById('in-u').value,
+    document.getElementById('in-v').value,
+    document.getElementById('in-w').value
+  ];
+
+  const cols = 3, rows = 4;
+  const cellW = 540, cellH = 460;
+  const headerH = 90;
+  const poster = document.createElement('canvas');
+  poster.width = cols * cellW;
+  poster.height = headerH + rows * cellH;
+  const ctx = poster.getContext('2d');
+
+  // White background
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, poster.width, poster.height);
+
+  // Poster Title Header
+  ctx.fillStyle = '#000000';
+  ctx.font = 'bold 30px serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('12 Slip Systems {111}<110> of Aluminium (FCC)', poster.width / 2, 42);
+  ctx.font = '20px serif';
+  ctx.fillText('4 Close-Packed {111} Planes × 3 <110> Directions = 12 Independent Slip Systems (hu + kv + lw = 0)', poster.width / 2, 74);
+
+  // Loop through all 12 systems, render each, and stamp onto poster grid
+  presets.forEach((sys, idx) => {
+    const col = idx % cols;
+    const row = Math.floor(idx / cols);
+    const x0 = col * cellW;
+    const y0 = headerH + row * cellH;
+
+    const [h, k, l] = sys.p;
+    const [u, v, w] = sys.d;
+
+    document.getElementById('in-h').value = h;
+    document.getElementById('in-k').value = k;
+    document.getElementById('in-l').value = l;
+    document.getElementById('in-u').value = u;
+    document.getElementById('in-v').value = v;
+    document.getElementById('in-w').value = w;
+
+    renderSystem();
+    renderer.render(scene, camera);
+
+    // Draw 3D snapshot into cell (maintaining aspect ratio)
+    const imgH = cellH - 75;
+    const imgW = (renderer.domElement.width / renderer.domElement.height) * imgH;
+    const imgX = x0 + (cellW - imgW) / 2;
+    ctx.drawImage(renderer.domElement, imgX, y0 + 40, imgW, imgH);
+
+    // Cell border
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x0 + 6, y0 + 6, cellW - 12, cellH - 12);
+
+    // Top Label: System # & Miller Indices (both overbar and minus notation)
+    const pBar = formatPlaneText(h, k, l);
+    const dBar = formatDirText(u, v, w);
+    const rawStr = `(${h}${k}${l})[${u}${v}${w}]`;
+
+    ctx.fillStyle = '#000000';
+    ctx.font = 'bold 21px serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`#${sys.id}: ${pBar}${dBar}   or   ${rawStr}`, x0 + cellW / 2, y0 + 34);
+
+    // Bottom Label: Dot Product Check
+    const dot = h * u + k * v + l * w;
+    ctx.fillStyle = '#005500';
+    ctx.font = 'bold 16px monospace';
+    ctx.fillText(`hu+kv+lw = (${h})(${u})+(${k})(${v})+(${l})(${w}) = ${dot} ✅`, x0 + cellW / 2, y0 + cellH - 18);
+  });
+
+  // Restore original inputs and view
+  document.getElementById('in-h').value = origInputs[0];
+  document.getElementById('in-k').value = origInputs[1];
+  document.getElementById('in-l').value = origInputs[2];
+  document.getElementById('in-u').value = origInputs[3];
+  document.getElementById('in-v').value = origInputs[4];
+  document.getElementById('in-w').value = origInputs[5];
+  renderSystem();
+
+  // Trigger PNG download
+  const link = document.createElement('a');
+  link.download = 'Aluminium_12_FCC_Slip_Systems_Poster.png';
+  link.href = poster.toDataURL('image/png');
+  link.click();
+}
+
+// --- 9. ANIMATION LOOP ---
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+renderSystem();
+animate();
+</script>
+</body>
+</html>
